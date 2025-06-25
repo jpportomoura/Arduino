@@ -1,0 +1,117 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+const char* ssid = "UNIFESO";
+const char* password = "";
+
+String token = "fc12cc50-28fd-4dba-9b4e-ba5bc12e3623"; 
+
+#define ft 4          // Fotoresistor (LDR)
+#define led 16        // LED
+
+bool controleManual = false;
+bool ledStatus = false;
+int limiteLuz = 2500;  // Limite de luminosidade para considerar 'noite'
+
+void setup() {
+  pinMode(ft, INPUT);
+  pinMode(led, OUTPUT);
+  Serial.begin(9600);
+}
+
+void loop() {
+  verificaWifi();    // Verifica conexão Wi-Fi
+  lerDashboard();    // Verifica se o controle é manual ou automático
+  iluminacao();      // Executa o controle de iluminação
+
+  delay(3000);  // Pequeno delay para reduzir requisições excessivas
+}
+
+void iluminacao() {
+  int res = analogRead(ft);
+  Serial.print("Luminosidade: ");
+  Serial.println(res);
+
+  if (!controleManual) {  // Modo automático
+    if (res <= limiteLuz) {
+      ligarLED();
+    } else {
+      desligarLED();
+    }
+  } else {  // Modo manual
+    if (ledStatus) {
+      ligarLED();
+    } else {
+      desligarLED();
+    }
+  }
+}
+
+void ligarLED() {
+  digitalWrite(led, HIGH);
+}
+
+void desligarLED() {
+  digitalWrite(led, LOW);
+}
+
+void verificaWifi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Já conectado ao Wi-Fi.");
+    return;
+  }
+
+  WiFi.begin(ssid, password);
+  Serial.println("Conectando ao Wi-Fi...");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWi-Fi conectado!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+void lerDashboard() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = "https://api.tago.io/data?variable=led_status&qty=1";
+
+    http.begin(url);
+    http.addHeader("Device-Token", token);
+
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0) {
+      String payload = http.getString();
+      Serial.println("Resposta GET: " + payload);
+
+      StaticJsonDocument<512> doc;
+      DeserializationError error = deserializeJson(doc, payload);
+
+      if (!error) {
+        const char* value = doc[0]["value"];
+
+        if (String(value) == "on") {
+          controleManual = true;
+          ledStatus = true;
+        } else if (String(value) == "off") {
+          controleManual = true;
+          ledStatus = false;
+        } else if (String(value) == "auto") {
+          controleManual = false;
+        }
+      } else {
+        Serial.print("Erro na leitura do JSON: ");
+        Serial.println(httpResponseCode);
+      }
+    } else {
+      Serial.print("Erro GET: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  }
+}
